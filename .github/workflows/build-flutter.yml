@@ -1,0 +1,65 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: "Job ID"
+        required: true
+      userId:
+        description: "User ID"
+        required: false
+        default: "0"
+      payload:
+        description: "JSON payload (mode, url, buildType)"
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Parse payload
+        id: p
+        run: |
+          echo '${{ github.event.inputs.payload }}' > payload.json
+          echo "url=$(jq -r '.url' payload.json)" >> $GITHUB_OUTPUT
+          echo "type=$(jq -r '.buildType // "release"' payload.json)" >> $GITHUB_OUTPUT
+
+      - name: Download source
+        run: |
+          curl -L -o src.zip "${{ steps.p.outputs.url }}"
+          mkdir src && unzip -q src.zip -d src
+          DIR=$(dirname "$(find src -name pubspec.yaml -not -path '*/.*' | head -1)")
+          echo "PROJECT_DIR=$DIR" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Build APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          flutter pub get
+          if [ "${{ steps.p.outputs.type }}" = "debug" ]; then
+            flutter build apk --debug
+          else
+            flutter build apk --release
+          fi
+
+      - name: Collect APK
+        run: |
+          mkdir out
+          cp $(find "$PROJECT_DIR/build/app/outputs" -name "*.apk" | head -1) out/app.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.event.inputs.jobId }}
+          path: out/app.apk
+          retention-days: 1
